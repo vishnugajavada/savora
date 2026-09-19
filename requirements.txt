@@ -1,6 +1,6 @@
 fastapi==0.115.0
 uvicorn==0.30.6
-pymongo==4.8.0
+pymongo>=4.18.1
 mongomock==4.1.2
 pydantic==2.9.2
 python-dotenv==1.0.1
@@ -14,3 +14,4 @@ requests==2.32.3
 plotly==5.24.0
 Pillow>=10.0.0
 python-multipart>=0.0.9
+certifi
