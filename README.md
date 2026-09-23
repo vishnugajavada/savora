@@ -13,7 +13,7 @@
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-IsolationForest-F7931E?logo=scikitlearn&logoColor=white)](https://scikit-learn.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-[**🔗 Live App**](https://savoravishnu.streamlit.app) · [**⚙️ API**](https://savora-1.onrender.com) · [**🐛 Report a Bug**](../../issues)
+[**🔗 Live App**](https://savoravishnu.streamlit.app) · [**🐛 Report a Bug**](../../issues)
 
 </div>
 
