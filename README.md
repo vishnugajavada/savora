@@ -64,25 +64,6 @@ Built end-to-end: FastAPI backend, Streamlit frontend, MongoDB Atlas for persist
 
 ---
 
-## 🏗️ Architecture
-
-```
-┌──────────────────────┐        HTTPS / JWT        ┌───────────────────────┐
-│   Streamlit Frontend   │ ────────────────────────> │    FastAPI Backend     │
-│   (Streamlit Cloud)    │ <──────────────────────── │       (Render)         │
-└──────────────────────┘        JSON over REST       └───────────┬───────────┘
-                                                                    │
-                                                          pymongo (TLS)
-                                                                    │
-                                                       ┌────────────▼────────────┐
-                                                       │      MongoDB Atlas        │
-                                                       └────────────────────────────┘
-```
-
-Two independently deployed services, communicating entirely over a documented REST API. The frontend never touches the database directly.
-
----
-
 ## 🛠️ Tech Stack
 
 **Backend**
@@ -173,29 +154,6 @@ For the deployed frontend, set:
 > **Never commit `.env` files.** This repo's `.gitignore` already excludes them.
 
 ---
-
-## 📁 Project Structure
-
-```
-savora/
-├── backend/
-│   ├── main.py               # FastAPI app — all API endpoints
-│   ├── auth.py                # JWT + password hashing
-│   ├── database.py            # MongoDB connection (Atlas / in-memory fallback)
-│   ├── trust.py                # Isolation Forest fake-review detection
-│   ├── nlp.py                  # Aspect-based sentiment analysis
-│   ├── recommend.py           # TF-IDF recommendation engine
-│   ├── seed_data.py           # Synthetic demo data generator
-│   ├── places_ingest.py       # Real data ingestion — Google Places API
-│   ├── osm_ingest.py          # Real data ingestion — OpenStreetMap (free)
-│   └── placeholder_images.py  # Image helpers, popular items, cost estimation
-├── frontend/
-│   ├── app.py                  # Streamlit application
-│   └── assets/                 # Static images
-├── requirements.txt
-└── .env.example
-```
-
 ---
 
 ## 📡 API Highlights
@@ -245,12 +203,6 @@ Being upfront about these, since they're worth understanding rather than discove
 - [ ] Password reset flow
 - [ ] Collaborative-filtering recommendations
 - [ ] Automated CI test suite
-
----
-
-## 📄 License
-
-This project is licensed under the [MIT License](LICENSE).
 
 ---
 
