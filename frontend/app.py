@@ -38,7 +38,11 @@ import plotly.graph_objects as go
 # Configuration
 # ============================================================
 
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
+API_URL = (
+    st.secrets.get("API_URL")
+    or os.getenv("API_URL")
+    or "http://127.0.0.1:8000"
+).rstrip("/")
 ASSET_DIR = Path(__file__).parent / "assets"
 
 FOOD_HERO = ASSET_DIR / "food-hero.webp"
