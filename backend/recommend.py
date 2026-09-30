@@ -23,7 +23,12 @@ def _get_similarity(restaurants):
         return ids, None
 
     vectorizer = TfidfVectorizer(stop_words="english", max_features=4000)
-    tfidf = vectorizer.fit_transform(texts)
+    try:
+        tfidf = vectorizer.fit_transform(texts)
+    except ValueError:
+        # A catalog containing only blank/stop-word names has no usable terms;
+        # recommendations should be empty rather than turning the endpoint 500.
+        return ids, None
     sim = cosine_similarity(tfidf)
     _similarity_cache["matrix"] = (key, ids, sim)
     return ids, sim

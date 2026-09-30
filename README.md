@@ -185,8 +185,15 @@ as real MongoDB, which is why it needs zero setup. To switch to a real database:
   always whoever is actually logged in, not something the client can spoof.
 - Tokens are JWTs valid for 7 days, stored in Streamlit's `session_state` (browser session
   only — logging out or closing the tab clears it; nothing is written to browser storage).
-- Set `JWT_SECRET` in `.env` before deploying anywhere public — the default value is fine
-  for local/demo use only.
+- Set `JWT_SECRET` to a randomly generated value of at least 32 characters in every deployed environment.
+  The backend refuses to start with `MONGO_URI` configured but no secret. When using
+  mongomock locally without a secret, it generates a random key at startup, so local
+  tokens expire when the process restarts.
+- Set `CORS_ORIGINS` to a comma-separated list of trusted browser origins when needed.
+  The default allows only local Streamlit origins; Streamlit's server-side API requests
+  do not require browser CORS access.
+- Login, signup, and review reporting have lightweight per-process rate limits. If the
+  backend runs multiple replicas, use a shared rate-limit store for cluster-wide limits.
 
 ## Try the fake-review detection live
 
@@ -201,7 +208,7 @@ as real MongoDB, which is why it needs zero setup. To switch to a real database:
 |---|---|
 | Backend (FastAPI) | [Render](https://render.com) — set start command `uvicorn main:app --host 0.0.0.0 --port $PORT` |
 | Database | [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) free tier |
-| Frontend (Streamlit) | [Streamlit Community Cloud](https://streamlit.io/cloud) — set `API_URL` in `frontend/app.py` to your deployed backend URL before pushing |
+| Frontend (Streamlit) | [Streamlit Community Cloud](https://streamlit.io/cloud) — set `API_URL` as a Streamlit secret or environment variable to your deployed backend URL |
 
 ## Performance
 

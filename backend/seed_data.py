@@ -1,4 +1,5 @@
 import random
+import argparse
 from datetime import datetime, timedelta
 
 from database import db
@@ -110,10 +111,17 @@ def gen_review_text(positive=True):
     )
 
 
-def seed():
-    db.restaurants.delete_many({})
-    db.reviews.delete_many({})
-    db.users.delete_many({})
+def seed(reset=False):
+    populated = any(db[name].count_documents({}) for name in ("restaurants", "reviews", "users"))
+    if populated and not reset:
+        raise RuntimeError(
+            "Refusing to replace existing application data. Use --reset and confirm "
+            "only for a disposable development database."
+        )
+    if reset:
+        db.restaurants.delete_many({})
+        db.reviews.delete_many({})
+        db.users.delete_many({})
 
     user_ids = [f"user_{i}" for i in range(1, 41)]
     for uid in user_ids:
@@ -222,4 +230,10 @@ def seed():
 
 
 if __name__ == "__main__":
-    seed()
+    parser = argparse.ArgumentParser(description="Load synthetic demo data")
+    parser.add_argument("--reset", action="store_true", help="Replace existing data after explicit confirmation")
+    args = parser.parse_args()
+    if args.reset and input("This deletes all restaurants, reviews, and users. Type DELETE to continue: ") != "DELETE":
+        print("Cancelled.")
+    else:
+        seed(reset=args.reset)

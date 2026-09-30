@@ -1,46 +1,90 @@
 import base64
 import os
 import re
+import threading
+import time
 import uuid
 from datetime import datetime
 from io import BytesIO
 from typing import Optional, List
 
-from fastapi import FastAPI, HTTPException, Query, Header, Depends, Form, File, UploadFile
+from fastapi import FastAPI, HTTPException, Query, Header, Depends, Form, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from PIL import Image
 from pydantic import BaseModel, Field
 
+from auth import hash_password, verify_password, create_token, decode_token
 from database import db
 from nlp import analyze_aspects, overall_sentiment
 from trust import compute_trust_scores
 from recommend import recommend_for_user, recommend_similar, invalidate_cache
-from auth import hash_password, verify_password, create_token, decode_token
 from placeholder_images import extract_popular_items, estimate_cost_for_two
 
 GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "").strip()
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_RE = re.compile(r'^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>_\-+=~`\[\];\'/\\]).{8,}$')
 MAX_REVIEW_IMAGES = 4
+MAX_REVIEW_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_REVIEW_TEXT_LENGTH = 5000
 MAX_IMAGE_DIMENSION = 900
 
 app = FastAPI(title="India Food Review Intelligence Platform", version="2.0.0")
+_cors_origins = [origin.strip() for origin in os.getenv(
+    "CORS_ORIGINS", "http://localhost:8501,http://127.0.0.1:8501"
+).split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    allow_origins=_cors_origins, allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Authorization", "Content-Type"],
 )
+
+# Lightweight per-process limits for the public/high-abuse endpoints. This
+# intentionally adds no dependency; production with multiple replicas should
+# move this state to a shared store.
+_rate_windows = {}
+_rate_lock = threading.Lock()
+_RATE_LIMITS = {
+    "/auth/login": (10, 300),
+    "/auth/signup": (5, 3600),
+}
+
+
+@app.middleware("http")
+async def limit_sensitive_requests(request: Request, call_next):
+    path = request.url.path
+    limit = _RATE_LIMITS.get(path)
+    if path.startswith("/reviews/") and path.endswith("/report"):
+        limit = (20, 3600)
+    if limit:
+        max_requests, window_seconds = limit
+        client_ip = request.client.host if request.client else "unknown"
+        key = (path, client_ip)
+        now = time.monotonic()
+        with _rate_lock:
+            hits, started = _rate_windows.get(key, (0, now))
+            if now - started >= window_seconds:
+                hits, started = 0, now
+            if hits >= max_requests:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Too many attempts. Please wait and try again."},
+                    headers={"Retry-After": str(max(1, int(window_seconds - (now - started))))},
+                )
+            _rate_windows[key] = (hits + 1, started)
+            if len(_rate_windows) > 10000:
+                _rate_windows.clear()
+    return await call_next(request)
 
 
 class SignupRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    email: str
-    password: str
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=256)
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=256)
 
 
 class ProfileUpdate(BaseModel):
@@ -49,15 +93,15 @@ class ProfileUpdate(BaseModel):
 
 
 class PasswordChange(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: str = Field(max_length=256)
+    new_password: str = Field(max_length=256)
 
 
 class ContactMessage(BaseModel):
-    name: str
-    email: str
-    subject: str
-    message: str
+    name: str = Field(min_length=1, max_length=80)
+    email: str = Field(max_length=254)
+    subject: str = Field(max_length=120)
+    message: str = Field(min_length=1, max_length=5000)
 
 
 def _rating(doc: dict) -> float:
@@ -126,7 +170,11 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> str:
 
 @app.on_event("startup")
 def startup_seed_if_empty():
-    if db.restaurants.count_documents({}) == 0:
+    # Seed only a genuinely fresh database. An empty restaurant collection does
+    # not imply that user accounts/reviews are disposable.
+    if (db.restaurants.count_documents({}) == 0
+            and db.reviews.count_documents({}) == 0
+            and db.users.count_documents({}) == 0):
         from seed_data import seed
         print("[startup] Database is empty — loading demo data.")
         seed()
@@ -143,7 +191,8 @@ def health():
         db.command("ping")
         return {"status": "healthy", "database": "connected", "restaurants": db.restaurants.count_documents({})}
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Database unavailable: {exc}")
+        print(f"[health] Database ping failed: {type(exc).__name__}")
+        raise HTTPException(status_code=503, detail="Database unavailable")
 
 
 @app.post("/auth/signup")
@@ -282,13 +331,19 @@ async def create_review(
         raise HTTPException(status_code=404, detail="Restaurant not found")
     if not text.strip():
         raise HTTPException(status_code=400, detail="Review text is required")
+    if len(text) > MAX_REVIEW_TEXT_LENGTH:
+        raise HTTPException(status_code=413, detail="Reviews must be 5,000 characters or fewer")
     if not 1 <= star_rating <= 5:
         raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
+    if len(images) > MAX_REVIEW_IMAGES:
+        raise HTTPException(status_code=400, detail="You can upload up to 4 photos per review")
     user = db.users.find_one({"_id": current_user})
     user_name = user.get("name", "Anonymous") if user else "Anonymous"
     image_data = []
-    for upload in images[:MAX_REVIEW_IMAGES]:
-        raw = await upload.read()
+    for upload in images:
+        raw = await upload.read(MAX_REVIEW_IMAGE_BYTES + 1)
+        if len(raw) > MAX_REVIEW_IMAGE_BYTES:
+            raise HTTPException(status_code=413, detail="Each photo must be 5 MB or smaller")
         encoded = process_uploaded_image(raw) if raw else None
         if encoded:
             image_data.append(encoded)
@@ -334,7 +389,7 @@ def recompute_restaurant_rating(restaurant_id: str):
 
 
 class ReviewUpdate(BaseModel):
-    text: str
+    text: str = Field(min_length=1, max_length=MAX_REVIEW_TEXT_LENGTH)
     star_rating: int
 
 
@@ -423,7 +478,7 @@ def toggle_helpful(review_id: str, current_user: str = Depends(get_current_user)
 
 
 @app.get("/reviews/reported")
-def get_reported_reviews(min_reports: int = Query(1, ge=1)):
+def get_reported_reviews(min_reports: int = Query(1, ge=1), current_user: str = Depends(get_current_user)):
     """Reviews the community has flagged, most-reported first — surfaces exactly
     the kind of content the trust-scoring system is meant to help catch."""
     reviews = list(db.reviews.find({}))
@@ -544,6 +599,8 @@ def get_my_reviews(current_user: str = Depends(get_current_user)):
 
 @app.post("/contact")
 def submit_contact(msg: ContactMessage):
+    if not EMAIL_RE.match(msg.email.strip().lower()):
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
     db.contact_messages.insert_one({
         "_id": f"contact_{uuid.uuid4().hex[:10]}", **msg.model_dump(), "submitted_at": datetime.utcnow()
     })

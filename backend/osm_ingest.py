@@ -133,9 +133,8 @@ def build_address(tags: dict) -> str:
 
 
 def ingest():
-    # Only wipe restaurants/reviews — real user accounts (db.users) are left intact.
-    db.restaurants.delete_many({})
-    db.reviews.delete_many({})
+    # Use stable OSM IDs with insert-only upserts. Re-running this job must not
+    # erase listings, aggregates, or user reviews attached to existing IDs.
 
     inserted = 0
     seen_ids = set()
@@ -196,11 +195,15 @@ def ingest():
                 "image_url": image_url,
             }
             try:
-                db.restaurants.insert_one(doc)
+                result = db.restaurants.update_one(
+                    {"_id": pid}, {"$setOnInsert": doc}, upsert=True
+                )
             except Exception as e:
                 print(f"    Skipped a duplicate/invalid entry: {e}")
                 continue
-            finalize_restaurant(pid, [])  # no reviews from OSM — starts at zero, like a fresh listing
+            if result.upserted_id is None:
+                continue  # preserve all existing user data and computed aggregates
+            finalize_restaurant(pid, [])  # new OSM listing starts with no reviews
             inserted += 1
             count_for_city += 1
 

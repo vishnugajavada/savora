@@ -228,11 +228,9 @@ def ingest():
             "and see the setup steps in this file's docstring."
         )
 
-    # Only wipe restaurants/reviews — real user accounts (db.users) are left intact.
-    db.restaurants.delete_many({})
-    db.reviews.delete_many({})
-
-    seen_ids = set()
+    # Add only previously unseen place IDs. Never replace reviews: user review
+    # documents reference restaurant IDs and must survive catalog refreshes.
+    seen_ids = {d["_id"] for d in db.restaurants.find({}, {"_id": 1})}
     inserted = 0
 
     for city in CITIES:

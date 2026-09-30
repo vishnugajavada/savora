@@ -1,4 +1,5 @@
 import base64
+import html
 
 
 def safe_image(value, width=None, **kwargs):
@@ -33,13 +34,35 @@ import requests
 import streamlit as st
 import plotly.graph_objects as go
 
+st.set_page_config(
+    page_title="Savora",
+    page_icon="🍛",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
 
 # ============================================================
 # Configuration
 # ============================================================
 
+# Avoid touching st.secrets when neither standard local secrets file exists:
+# Streamlit versions differ in how they report an absent secrets directory.
+# Hosted/local secrets files are still supported, while API_URL in the process
+# environment takes precedence and needs no secrets.toml.
+_secrets_files = (
+    Path.home() / ".streamlit" / "secrets.toml",
+    Path(__file__).parent / ".streamlit" / "secrets.toml",
+)
+_api_url_secret = None
+if not os.getenv("API_URL") and any(path.is_file() for path in _secrets_files):
+    try:
+        _api_url_secret = st.secrets.get("API_URL")
+    except (FileNotFoundError, KeyError):
+        _api_url_secret = None
+
 API_URL = (
-    st.secrets.get("API_URL")
+    _api_url_secret
     or os.getenv("API_URL")
     or "http://127.0.0.1:8000"
 ).rstrip("/")
@@ -71,14 +94,6 @@ CUISINES_FALLBACK = [
     "North Indian", "South Indian", "Chinese", "Italian", "Continental",
     "Biryani", "Mughlai", "Fast Food", "Cafe", "Desserts",
 ]
-
-
-st.set_page_config(
-    page_title="Savora",
-    page_icon="🍛",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 
 # ============================================================
@@ -120,6 +135,11 @@ def render_markdown(content, **kwargs):
 
     cleaned = textwrap.dedent(str(content)).strip()
     return st.markdown(cleaned, **kwargs)
+
+
+def escape_html(value):
+    """Escape API/user-provided text before placing it in unsafe HTML blocks."""
+    return html.escape(str(value or ""), quote=True)
 
 
 
@@ -195,9 +215,13 @@ def get_api(endpoint, params=None, token=None, use_cache=True):
 
 def post_api(endpoint, **kwargs):
     try:
+        # Render free instances can take 30–60 seconds to wake. Login/signup
+        # are the first calls after that idle period, so give the cold start
+        # room to finish instead of showing a false login failure.
+        timeout = 70 if endpoint in {"/auth/login", "/auth/signup"} else 25
         return requests.post(
             API_URL + endpoint,
-            timeout=25,
+            timeout=timeout,
             **kwargs,
         )
     except requests.RequestException:
@@ -587,20 +611,78 @@ def inject_css():
            ======================================================== */
 
         section[data-testid="stSidebar"]{
+            position:relative !important;
+            isolation:isolate !important;
             background:#17191b !important;
+            height:100vh !important;
+            min-height:100vh !important;
             min-width:250px !important;
             max-width:250px !important;
             width:250px !important;
             border-right:1px solid #2b2d30 !important;
         }
 
+        /* Paint the reference white navigation panel for the full sidebar
+           height. Streamlit sizes its content wrapper to the widgets, so a
+           min-height on that wrapper alone leaves a short floating panel. */
+        section[data-testid="stSidebar"]::before{
+            content:"";
+            position:absolute;
+            top:0;
+            bottom:0;
+            left:15.5%;
+            width:67%;
+            background:#fff;
+            border-radius:28px;
+            z-index:0;
+            pointer-events:none;
+        }
+
         section[data-testid="stSidebar"] > div{
-            background:#17191b !important;
+            position:relative !important;
+            z-index:1 !important;
+            background:transparent !important;
         }
 
         section[data-testid="stSidebar"] div[data-testid="stSidebarContent"]{
-            background:#17191b !important;
+            background:transparent !important;
             padding:0 14px 20px 14px !important;
+        }
+
+        section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
+        section[data-testid="stSidebar"] [data-testid="stSidebarContent"] > div,
+        section[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{
+            background:transparent !important;
+        }
+
+        section[data-testid="stSidebar"] [data-testid="stSidebarContent"] > div,
+        section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div{
+            padding-top:0 !important;
+            margin-top:0 !important;
+        }
+
+        section[data-testid="stSidebar"] .block-container{
+            max-width:none !important;
+            min-height:100vh !important;
+            padding:0 14px 8px !important;
+        }
+
+        /* Streamlit adds generous spacing and top padding to sidebar blocks
+           by default. Keep the nav card aligned to the top and its rows close. */
+        section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
+        section[data-testid="stSidebar"] [data-testid="stSidebarContent"]{
+            padding-top:0 !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"]{
+            min-height:100vh !important;
+            box-sizing:border-box !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{
+            gap:.2rem !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stElementContainer"]{
+            margin:0 !important;
+            padding:0 !important;
         }
 
         section[data-testid="stSidebar"] .stMarkdown{
@@ -611,8 +693,8 @@ def inject_css():
             display:flex;
             align-items:center;
             gap:10px;
-            padding:14px 10px 20px 10px;
-            margin-bottom:8px;
+            padding:8px 10px 8px 10px;
+            margin-bottom:4px;
         }
 
         .sidebar-logo{
@@ -650,13 +732,13 @@ def inject_css():
             font-weight:850 !important;
             letter-spacing:.16em !important;
             text-transform:uppercase !important;
-            padding:8px 10px 12px !important;
+            padding:5px 10px 6px !important;
         }
 
         .side-nav-caption{
             color:#92979e !important;
             font-size:10px !important;
-            padding:0 10px 12px !important;
+            padding:0 10px 7px !important;
         }
 
         section[data-testid="stSidebar"] div[data-testid="stButton"]{
@@ -667,9 +749,9 @@ def inject_css():
 
         section[data-testid="stSidebar"] div[data-testid="stButton"] > button{
             width:100% !important;
-            min-height:42px !important;
-            height:42px !important;
-            margin:3px 0 !important;
+            min-height:34px !important;
+            height:34px !important;
+            margin:0 !important;
             padding:0 13px !important;
             border:0 !important;
             border-radius:7px !important;
@@ -684,8 +766,33 @@ def inject_css():
         }
 
         section[data-testid="stSidebar"] div[data-testid="stButton"] > button:hover{
-            background:#25282b !important;
-            color:#ffffff !important;
+            background:#fff0e8 !important;
+            color:#17202a !important;
+            outline:1px solid #ffc7ad !important;
+            outline-offset:-1px !important;
+        }
+
+        /* Streamlit's focus/pressed state can otherwise turn a secondary nav
+           button nearly black while its inherited label remains dark. Keep
+           keyboard focus and pointer hover readable on the light nav panel. */
+        section[data-testid="stSidebar"] button[kind="secondary"]:focus,
+        section[data-testid="stSidebar"] button[kind="secondary"]:focus-visible,
+        section[data-testid="stSidebar"] button[kind="secondary"]:active,
+        section[data-testid="stSidebar"] button[kind="secondary"]:hover,
+        section[data-testid="stSidebar"] button[data-testid*="secondary"]:hover,
+        section[data-testid="stSidebar"] button[data-testid*="secondary"]:focus-visible{
+            background:#fff0e8 !important;
+            color:#17202a !important;
+            outline:2px solid #ff9b70 !important;
+            outline-offset:1px !important;
+            box-shadow:none !important;
+        }
+
+        section[data-testid="stSidebar"] button[kind="secondary"]:hover p,
+        section[data-testid="stSidebar"] button[kind="secondary"]:focus-visible p,
+        section[data-testid="stSidebar"] button[data-testid*="secondary"]:hover p,
+        section[data-testid="stSidebar"] button[data-testid*="secondary"]:focus-visible p{
+            color:#17202a !important;
         }
 
         section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="primary"]{
@@ -972,7 +1079,7 @@ def sidebar_nav():
 
     render_markdown(
         f'<div class="side-nav-title">Dashboard</div>'
-        f'<div class="side-nav-caption">Hello, {name}</div>',
+        f'<div class="side-nav-caption">Hello, {escape_html(name)}</div>',
         unsafe_allow_html=True,
     )
 
@@ -1085,12 +1192,12 @@ def restaurant_card(rest, prefix="card"):
         show_image(rest)
 
         render_markdown(
-            f'<div class="card-title">{name}</div>',
+            f'<div class="card-title">{escape_html(name)}</div>',
             unsafe_allow_html=True,
         )
 
         render_markdown(
-            f'<div class="card-address">{address}</div>',
+            f'<div class="card-address">{escape_html(address)}</div>',
             unsafe_allow_html=True,
         )
 
@@ -1122,7 +1229,7 @@ def restaurant_card(rest, prefix="card"):
         if chips:
             render_markdown(
                 " ".join(
-                    f'<span class="chip">{x}</span>'
+                    f'<span class="chip">{escape_html(x)}</span>'
                     for x in chips
                 ),
                 unsafe_allow_html=True,
@@ -1224,7 +1331,7 @@ def dashboard():
 
             with cols[i % len(cols)]:
                 with st.container(border=True):
-                    render_markdown(f"### {city}")
+                    render_markdown(f"### {escape_html(city)}")
                     st.caption(
                         f"{count} restaurants"
                         if count != ""
@@ -1520,7 +1627,7 @@ def render_detail(restaurant_id):
         st.rerun()
 
     render_markdown(
-        f"## {restaurant.get('name', 'Restaurant')}"
+        f"## {escape_html(restaurant.get('name', 'Restaurant'))}"
     )
 
     st.caption(
@@ -1534,7 +1641,7 @@ def render_detail(restaurant_id):
 
     render_markdown(
         " ".join(
-            f'<span class="chip">{x}</span>'
+            f'<span class="chip">{escape_html(x)}</span>'
             for x in chips
             if x
         ),
@@ -1707,7 +1814,7 @@ def render_detail(restaurant_id):
                 <div style="color:#17202a !important;">
                      <b style="color:#17202a !important;">{'⭐' * stars}</b>
                     · <b style="color:#17202a !important;">
-                         {review.get('user_name', 'Anonymous')}
+                         {escape_html(review.get('user_name', 'Anonymous'))}
                     </b>
                     · {badge}
                 </div>
@@ -1724,7 +1831,7 @@ def render_detail(restaurant_id):
 
             st.markdown(
                 f'<div style="color:#17202a !important; font-size:15px; line-height:1.6;">'
-                f'{review.get("text", "")}'
+                f'{escape_html(review.get("text", ""))}'
                 f'</div>',
                 unsafe_allow_html=True,
          )
@@ -1973,7 +2080,7 @@ def reviews_page():
 
             render_markdown(
                 f"### "
-                f"{row.get('restaurant_name', 'Restaurant')}"
+                f"{escape_html(row.get('restaurant_name', 'Restaurant'))}"
                 f" · {'⭐' * stars}"
             )
 

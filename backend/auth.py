@@ -3,11 +3,23 @@ import hmac
 import hashlib
 import base64
 import time
+import secrets
 import jwt
+from dotenv import load_dotenv
 
-# Set JWT_SECRET in your .env before deploying anywhere public — this default
-# is fine for local/demo use only.
-SECRET_KEY = os.getenv("JWT_SECRET", "dev-secret-change-before-deploying")
+load_dotenv()
+
+_configured_secret = os.getenv("JWT_SECRET", "").strip()
+if _configured_secret:
+    if len(_configured_secret) < 32:
+        raise RuntimeError("JWT_SECRET must contain at least 32 characters.")
+    SECRET_KEY = _configured_secret
+elif os.getenv("MONGO_URI", "").strip():
+    raise RuntimeError("JWT_SECRET must be set when using a persistent database.")
+else:
+    # Keep zero-setup local development, but never use a predictable signing
+    # key. Tokens from a local run are intentionally invalid after restart.
+    SECRET_KEY = secrets.token_urlsafe(48)
 TOKEN_EXPIRY_SECONDS = 60 * 60 * 24 * 7  # 7 days
 
 

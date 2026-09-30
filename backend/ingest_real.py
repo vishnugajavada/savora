@@ -90,7 +90,11 @@ def main():
         ])
 
     if args.clear:
-        confirm = input("This will delete all restaurants and reviews. Type DELETE to continue: ")
+        user_review_count = db.reviews.count_documents({"user_id": {"$exists": True}})
+        print("WARNING: this will remove every restaurant and every attached review.")
+        if user_review_count:
+            print(f"{user_review_count} user-submitted review(s) will be permanently deleted.")
+        confirm = input("Type DELETE to continue: ")
         if confirm != "DELETE":
             print("Cancelled.")
             return
@@ -107,12 +111,13 @@ def main():
 
     added = places.ingest_one_city(city, existing_ids)
 
-    # Enforce the requested cap by removing the newest overflow entries from this
-    # run only. In normal portfolio use, the default 60 is already conservative.
-    if added > args.max_restaurants:
-        docs = list(db.restaurants.find({"area": city}, {"_id": 1}).skip(args.max_restaurants))
-        for doc in docs:
-            rid = doc["_id"]
+    # Enforce the cap only against listings created by this run; never remove
+    # an older city listing (or any review attached to it) to satisfy the cap.
+    new_ids = [d["_id"] for d in db.restaurants.find(
+        {"area": city, "_id": {"$nin": list(existing_ids)}}, {"_id": 1}
+    )]
+    if len(new_ids) > args.max_restaurants:
+        for rid in new_ids[args.max_restaurants:]:
             db.reviews.delete_many({"restaurant_id": rid})
             db.restaurants.delete_one({"_id": rid})
         added = args.max_restaurants
